@@ -28,7 +28,7 @@ logger = setup_logger("scraper")
 # BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 
-CONFIG_PATH = os.path.join('..', '..', 'resources', 'configs')
+CONFIG_PATH = os.path.join('..', 'resources', 'configs')
 config_file = os.path.join(CONFIG_PATH, 'config.json')
 
 with open(config_file) as f:

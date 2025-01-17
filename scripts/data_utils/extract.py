@@ -10,7 +10,7 @@ from scripts.utils.logger import setup_logger
 
 logger = setup_logger("extract")
 
-CONFIG_PATH = os.path.join('..', '..', 'resources', 'configs')
+CONFIG_PATH = os.path.join('..', 'resources', 'configs')
 config_file = os.path.join(CONFIG_PATH, 'config.json')
 
 with open(config_file) as f:
