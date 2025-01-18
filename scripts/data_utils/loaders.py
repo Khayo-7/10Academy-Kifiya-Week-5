@@ -1,4 +1,5 @@
 import os
+import json
 import pandas as pd
 from scripts.utils.logger import setup_logger
 
@@ -8,8 +9,11 @@ logger = setup_logger("data_loader")
 def load_csv(file_path: str, sep=',') -> pd.DataFrame:
     """
     Load a CSV file into a pandas DataFrame.
+
     Args:
         file_path (str): Path to the CSV file.
+        sep (str, optional): Separator to use. Defaults to ','.
+
     Returns:
         pd.DataFrame: Loaded DataFrame.
     """
@@ -45,3 +49,20 @@ def save_csv(dataframe, output_path):
         logger.info(f"Data saved to {output_path} successfully.")
     except Exception as e:
         logger.error(f"Error saving data to {output_path}: {e}")
+
+def load_json(file_path):
+    """
+    Load a JSON file into a Python object.
+
+    Args:
+        file_path (str): Path to the JSON file.
+
+    Returns:
+        object: Loaded JSON object.
+    """
+    try:
+        with open(file_path) as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading JSON from {file_path}: {e}")
+        return None

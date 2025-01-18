@@ -1,3 +1,5 @@
+import pandas as pd
+import re
 import re
 import os
 import sys
@@ -104,3 +106,18 @@ def clean_data(data, column):
     data[column] = data[column].apply(remove_emojis)
     data['Labeled_Message'] = data[column].apply(label_message_utf8_with_birr)
     # save_labeled_data_to_file(data, file_path, labeled_column)
+
+
+def normalize_text(text):
+    """Clean and normalize Amharic text."""
+    text = re.sub(r"[^\w\s]", "", text)  # Remove special characters
+    text = text.strip()  # Remove extra spaces
+    return text
+
+def preprocess_data(input_file, output_file):
+    """Reads raw messages, preprocesses them, and saves the structured dataset."""
+    df = pd.read_csv(input_file)
+    df["normalized_text"] = df["text"].apply(normalize_text)
+    df.dropna(subset=["normalized_text"], inplace=True)  # Drop empty rows
+    df.to_csv(output_file, index=False)
+    print(f"Preprocessed data saved to {output_file}")
