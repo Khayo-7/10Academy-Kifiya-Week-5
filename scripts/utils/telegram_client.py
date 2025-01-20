@@ -2,17 +2,22 @@ import os
 import sys
 import getpass
 import asyncio
+from typing import List
+
 # from dotenv import load_dotenv
-from telethon import TelegramClient
+from telethon.tl.types import Message
+# from telethon import TelegramClient
+from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
+
 
 # Setup logger for data_loader
 sys.path.append(os.path.join(os.path.abspath(__file__), '..', '..', '..'))
 from scripts.utils.logger import setup_logger
 from scripts.data_utils.loaders import load_json
 
-# logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(media)s")
 # logger = logging.getLogger(__name__)
 logger = setup_logger("scraper")
 
@@ -22,6 +27,7 @@ logger = setup_logger("scraper")
 # API_ID = os.getenv("API_ID")
 # API_HASH = os.getenv("API_HASH")
 # PHONE_NUMBER = os.getenv("PHONE_NUMBER")
+# TELEGRAM_SCRAPER_SEMAPHORE = os.getenv("TELEGRAM_SCRAPER_SEMAPHORE")
 # BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 CONFIG_PATH = os.path.join('..', 'resources', 'configs')
@@ -31,10 +37,12 @@ config = load_json(config_filepath)
 API_ID = config['API_ID']
 API_HASH = config['API_HASH']
 PHONE_NUMBER = config['PHONE_NUMBER']
+TELEGRAM_SCRAPER_SEMAPHORE = config['TELEGRAM_SCRAPER_SEMAPHORE']
 # BOT_TOKEN = config['BOT_TOKEN']
 
 # Define a semaphore for limiting concurrent downloads
-semaphore = asyncio.Semaphore(5)
+semaphore_limit = int(TELEGRAM_SCRAPER_SEMAPHORE)
+semaphore = asyncio.Semaphore(semaphore_limit)
 
 def create_client(session_file="telegram.session"):
     """Create and return a Telegram client."""
@@ -79,28 +87,32 @@ def download_concurrently(func):
     return wrapper
 
 @download_concurrently
-async def download_media(messages, media_dir):
+async def download_media(medias: List[Message], media_dir: str) -> List[str]:
     """Download media from messages while respecting the semaphore limit."""
+
     # Ensure the media directory exists
     os.makedirs(media_dir, exist_ok=True)
     
-    async def download(message):
+    async def download(media):
         # Determine the file path based on the media type
-        file_ext = None
-        file_ext = "jpg" if hasattr(message.media, 'photo') else message.media.document.mime_type.split('/')[-1] if hasattr(message.media, 'document') and message.media.document.mime_type else "bin"
-        filename = f"{message.id}.{file_ext}"
-        media_path = os.path.join(media_dir, filename)
-        print("media_path", media_path)
-        logger.info(f"Preparing to download to: {media_path}")
+        try:
+            file_ext = (
+                "jpg" if hasattr(media.media, 'photo')
+                else media.media.document.mime_type.split('/')[-1]
+                if hasattr(media.media, 'document') and media.media.document.mime_type 
+                else "bin"
+            )
+            filename = f"{media.id}.{file_ext}"
+            media_path = os.path.join(media_dir, filename)
 
-        async with semaphore:
-            try:
-                # await client.download_media(media, media_path)
-                media_path = await message.download_media(media_path)
+            logger.info(f"Preparing to download: {media_path}")
+            async with semaphore:
+                media_path = await media.download_media(media_path)
                 logger.info(f"Downloaded: {media_path}")
                 return media_path
-            except Exception as e:
-                logger.error(f"Failed to download {media_path}: {e}")
 
-    tasks = [download(message) for message in messages if message.media]
+        except Exception as e:
+            logger.error(f"Failed to download media for message {media.id}: {e}")
+
+    tasks = [download(media) for media in medias]
     return tasks

@@ -63,7 +63,8 @@ async def main(channels_filepath, media_dir):
     """Main function to set up the client and listen for new messages."""
 
     # Load channel usernames from a JSON file
-    channel_usernames = load_json(channels_filepath)
+    channels = load_json(channels_filepath)
+    channel_usernames = channels.get('CHANNELS', [])
 
     # Create PostgreSQL table if it doesn't exist
     create_table()
