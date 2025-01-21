@@ -1,20 +1,20 @@
 import os
 import sys
-import json
 from PIL import Image
 import pytesseract
 
 # Setup logger for data_loader
 sys.path.append(os.path.join(os.path.abspath(__file__), '..', '..', '..'))
 from scripts.utils.logger import setup_logger
+from scripts.data_utils.loaders import load_json
 
 logger = setup_logger("extract")
 
 CONFIG_PATH = os.path.join('..', 'resources', 'configs')
 config_file = os.path.join(CONFIG_PATH, 'config.json')
 
-with open(config_file) as f:
-    config = json.load(f)
+config = load_json(config_file)
+
 TESSERACT_PATH = config['TESSERACT_PATH']
 
 # Set Tesseract path

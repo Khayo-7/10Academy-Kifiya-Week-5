@@ -1,0 +1,52 @@
+import os
+import sys
+import numpy as np
+from typing import Dict, Tuple
+from sklearn.metrics import precision_recall_fscore_support
+from datasets import load_metric, Dataset, DatasetDict
+
+# Setup logger for data_loader
+sys.path.append(os.path.join(os.path.abspath(__file__), '..', '..', '..'))
+from scripts.utils.logger import setup_logger
+
+logger = setup_logger("metrics")
+
+# Define evaluation metric
+metric = load_metric("seqeval")
+
+# Define metrics for evaluation
+def compute_metrics(pred: Tuple, label_mapping: Dict, use_seqeval: bool = True) -> Dict:
+    """
+    Compute evaluation metrics for NER.
+    """
+    predictions, labels = pred
+    predictions = np.argmax(predictions, axis=-1)
+    
+    # predictions = predictions.argmax(axis=-1)
+    # predictions = np.argmax(predictions, axis=2)
+
+    # true_labels = [[label_mapping[l] for l in label if l != -100] for label in labels]
+    # true_predictions = [
+    #     [label_mapping.int2str(pred) for idx, pred in enumerate(prediction) if labels[i][idx] != -100]
+    #     for i, prediction in enumerate(predictions)
+    # ]
+
+    true_labels = [[l for l in label if l != -100] for label in labels]
+    true_predictions = [
+        [label_mapping[p] for p, l in zip(prediction, label) if l != -100]
+        for prediction, label in zip(predictions, labels)
+    ]
+
+    if use_seqeval:
+        results = metric.compute(predictions=true_predictions, references=true_labels)
+        return {
+            "precision": results["overall_precision"],
+            "recall": results["overall_recall"],
+            "f1": results["overall_f1"],
+            "accuracy": results["overall_accuracy"],
+        }
+    else:
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            true_labels, true_predictions, average="weighted"
+        )
+        return {"precision": precision, "recall": recall, "f1": f1}
