@@ -2,13 +2,12 @@ import os
 import re
 import sys
 import pandas as pd
-from typing import Dict
+from typing import Dict, List
 from multiprocessing import Pool, cpu_count
 
 # Setup logger
 sys.path.append(os.path.join(os.path.abspath(__file__), '..', '..', '..'))
 from scripts.utils.logger import setup_logger
-from scripts.modeling.tokenizer import tokenize_text
 
 logger = setup_logger("generator")
 
@@ -18,6 +17,29 @@ PATTERNS = {
     "PRICE": re.compile(r"\b(በ|ዋጋ)\s?\d+\s?ብር\b"),
     "LOC": re.compile(r"\b(አዲስ\s?አበባ|ቦሌ|መቐለ|አዳማ|ሲዳማ|ሱቅ|ነዋሪ)\b"),
 }
+
+def tokenize_text(text: str, include_punctuations: bool = False) -> List[str]:
+    """
+    Tokenizes input text into tokens with optional punctuation inclusion.
+
+    Args:
+        text (str): The text to tokenize.
+        include_punctuations (bool): Whether to include punctuation in tokens.
+
+    Returns:
+        List[str]: List of tokens from the text.
+
+    Raises:
+        Exception: If tokenization fails.
+    """
+    try:
+        if include_punctuations:
+            return re.findall(r'\S+', text)  # Include punctuation
+        else:
+            return re.findall(r'\w+', text)  # Exclude punctuation
+    except Exception as e:
+        logger.error(f"Error during text tokenization: {e}")
+        raise
 
 def assign_entity_labels(tokens, patterns=PATTERNS):
     """

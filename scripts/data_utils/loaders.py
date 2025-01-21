@@ -1,5 +1,6 @@
 import os
 import csv
+import yaml
 import json
 import pandas as pd
 from typing import List, Dict, Union, Optional
@@ -7,6 +8,32 @@ from scripts.utils.logger import setup_logger
 
 # Setup logger for data_loader
 logger = setup_logger("data_loader")
+
+def load_yml(file_path: str):
+    """
+    Load a YAML file into a Python object.
+
+    Args:
+        file_path (str): Path to the YAML file.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        Exception: If an error occurs during loading.
+    """
+    if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    try:
+        logger.info(f"Loading data from YAML file: {file_path}")
+        with open(file_path, mode='r', encoding='utf-8') as file:
+            data = yaml.safe_load(file)
+        
+        logger.info(f"Loaded YAML data from {file_path}.")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading YAML from {file_path}: {e}")
+        raise
 
 def load_csv(file_path: str, delimiter: str = ',', use_pandas: bool = True) -> Union[List[Dict[str, str]], pd.DataFrame]:
     """
