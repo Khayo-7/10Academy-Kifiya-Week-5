@@ -1,5 +1,6 @@
 import os
 import sys
+import pandas as pd
 from datasets import DatasetDict
 from transformers import DataCollatorForTokenClassification, Trainer, TrainingArguments
 
@@ -132,13 +133,6 @@ def train_ner_model(data_path: str, output_dir: str = MODEL_OUTPUT_DIR, model_na
     except Exception as e:
         logger.error(f"Error during model training: {e}")
         raise
-
-
-import os
-import pandas as pd
-from transformers import AutoTokenizer, AutoModelForTokenClassification
-from scripts.modeling.train_ner_model import train_ner_model
-
 
 def fine_tune_multiple_models(models: list, dataset_dir: str, base_output_dir: str, params: dict) -> pd.DataFrame:
     """
