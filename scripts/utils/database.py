@@ -1,8 +1,7 @@
 import os
 import sys
 import psycopg2
-import pandas as pd
-from psycopg2 import sql
+# import pandas as pd
 # from dotenv import load_dotenv
 # from sqlalchemy import create_engine
 

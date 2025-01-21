@@ -2,222 +2,289 @@ import os
 import csv
 import json
 import pandas as pd
+from typing import List, Dict, Union, Optional
 from scripts.utils.logger import setup_logger
 
 # Setup logger for data_loader
 logger = setup_logger("data_loader")
 
-def load_csv(file_path: str, sep=',') -> pd.DataFrame:
+def load_csv(file_path: str, delimiter: str = ',', use_pandas: bool = True) -> Union[List[Dict[str, str]], pd.DataFrame]:
     """
-    Load a CSV file into a pandas DataFrame.
+    Load a CSV file into a list of dictionaries or a pandas DataFrame.
 
     Args:
         file_path (str): Path to the CSV file.
-        sep (str, optional): Separator to use. Defaults to ','.
+        delimiter (str, optional): Delimiter to use. Defaults to ','.
+        use_pandas (bool, optional): Whether to use pandas. Defaults to True.
 
     Returns:
-        pd.DataFrame: Loaded DataFrame.
+        Union[List[Dict[str, str]], pd.DataFrame]: Loaded data.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        Exception: If an error occurs during loading.
     """
     if not os.path.exists(file_path):
         logger.error(f"File not found: {file_path}")
-        return None
-    
-    try:
-        logger.info(f"Loading data from file ...")
-        data = pd.read_csv(file_path, sep=sep)
-        # dataframe = pd.read_csv(file_path, sep='|')
-        # dataframe = pd.read_csv(file_path, sep='\t')
-        logger.info(f"Loaded data from {file_path}, shape: {data.shape}")
+        raise FileNotFoundError(f"File not found: {file_path}")
 
+    try:
+        logger.info(f"Loading data from CSV file: {file_path}")
+        if use_pandas:
+            data = pd.read_csv(file_path, delimiter=delimiter)
+            logger.info(f"Loaded {len(data)} rows from {file_path} using pandas.")
+        else:
+            data = []
+            with open(file_path, mode='r', encoding='utf-8') as file:
+                reader = csv.DictReader(file, delimiter=delimiter)
+                for row in reader:
+                    data.append(row)
+            logger.info(f"Loaded {len(data)} rows from {file_path} without pandas.")
         return data
     except Exception as e:
-        logger.error(f"Error loading {file_path}: {e}")
-        return None
+        logger.error(f"Error loading CSV from {file_path}: {e}")
+        raise
 
-def save_csv(dataframe: pd.DataFrame, output_path: str) -> None:
+def save_csv(data: Union[List[Dict[str, str]], pd.DataFrame], output_path: str, use_pandas: bool = True) -> None:
     """
-    Saves the dataframe to a CSV file.
+    Saves data to a CSV file.
 
     Args:
-        dataframe (pd.DataFrame): The dataframe to save.
-        output_path (str): The path to save the dataframe.
+        data (Union[List[Dict[str, str]], pd.DataFrame]): Data to save.
+        output_path (str): Path to save the CSV file.
+        use_pandas (bool, optional): Whether to use pandas. Defaults to True.
 
-    Returns:
-        None
+    Raises:
+        Exception: If an error occurs during saving.
     """
     try:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        dataframe.to_csv(output_path, index=False)
-        logger.info(f"Data saved to {output_path} successfully.")
+        if use_pandas:
+            if isinstance(data, pd.DataFrame):
+                data.to_csv(output_path, index=False)
+            else:
+                pd.DataFrame(data).to_csv(output_path, index=False)
+            logger.info(f"Data saved to {output_path} using pandas.")
+        else:
+            with open(output_path, mode='w', encoding='utf-8', newline='') as file:
+                if data:
+                    writer = csv.DictWriter(file, fieldnames=data[0].keys())
+                    writer.writeheader()
+                    writer.writerows(data)
+            logger.info(f"Data saved to {output_path} without pandas.")
     except Exception as e:
         logger.error(f"Error saving data to {output_path}: {e}")
+        raise
 
-def load_json(file_path):
+def load_json(file_path: str, use_pandas: bool = False) -> Union[List[Dict], Dict, pd.DataFrame]:
     """
-    Load a JSON file into a Python object.
+    Load a JSON file into a Python object or a pandas DataFrame.
 
     Args:
         file_path (str): Path to the JSON file.
+        use_pandas (bool, optional): Whether to use pandas. Defaults to False.
 
     Returns:
-        object: Loaded JSON object.
+        Union[List[Dict], Dict, pd.DataFrame]: Loaded data.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        Exception: If an error occurs during loading.
     """
+    if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
+        raise FileNotFoundError(f"File not found: {file_path}")
+
     try:
-        with open(file_path) as f:
-            return json.load(f)
+        logger.info(f"Loading data from JSON file: {file_path}")
+        with open(file_path, mode='r', encoding='utf-8') as file:
+            data = json.load(file)
+        if use_pandas:
+            data = pd.DataFrame(data)
+            logger.info(f"Loaded JSON data from {file_path} using pandas.")
+        else:
+            logger.info(f"Loaded JSON data from {file_path} without pandas.")
+        return data
     except Exception as e:
         logger.error(f"Error loading JSON from {file_path}: {e}")
-        return None
+        raise
 
-def save_json(dataframe: pd.DataFrame, output_path: str) -> None:
+def save_json(data: Union[List[Dict], Dict, pd.DataFrame], output_path: str, use_pandas: bool = True) -> None:
     """
-    Saves the dataframe to a JSON file.
+    Saves data to a JSON file.
 
     Args:
-        dataframe (pd.DataFrame): The dataframe to save.
-        output_path (str): The path to save the dataframe.
+        data (Union[List[Dict], Dict, pd.DataFrame]): Data to save.
+        output_path (str): Path to save the JSON file.
+        use_pandas (bool, optional): Whether to use pandas. Defaults to True.
 
-    Returns:
-        None
+    Raises:
+        Exception: If an error occurs during saving.
     """
     try:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        dataframe.to_json(output_path, index=False)
-        logger.info(f"Data saved to {output_path} successfully.")
+        if use_pandas:
+            if isinstance(data, pd.DataFrame):
+                data.to_json(output_path, orient="records", lines=True, force_ascii=False)
+            else:
+                pd.DataFrame(data).to_json(output_path, orient="records", lines=True, force_ascii=False)
+            logger.info(f"Data saved to {output_path} using pandas.")
+        else:
+            with open(output_path, mode='w', encoding='utf-8') as file:
+                json.dump(data, file, ensure_ascii=False, indent=4)
+            logger.info(f"Data saved to {output_path} without pandas.")
     except Exception as e:
         logger.error(f"Error saving data to {output_path}: {e}")
+        raise
 
-def load_dataframe(file_path: str) -> pd.DataFrame:
+def load_conll(file_path: str, columns=["Tokens", "Labels"], use_pandas: bool = True) -> Union[List[Dict[str, List[str]]], pd.DataFrame]:
     """
-    Loads data from a JSON or CSV file into a pandas DataFrame.
+    Loads data from a CoNLL file into a list of dictionaries or a pandas DataFrame.
 
     Args:
-        file_path (str): Path to the file to load.
+        file_path (str): The path to the CoNLL file to be loaded.
+        columns (list, optional): A list of column names to use for the data. Defaults to ["Tokens", "Labels"].
+        use_pandas (bool, optional): A flag indicating whether to use pandas for data loading. Defaults to True.
 
     Returns:
-        pd.DataFrame: Loaded DataFrame.
+        Union[List[Dict[str, List[str]]], pd.DataFrame]: The loaded data, either as a list of dictionaries or a pandas DataFrame.
+
+    Raises:
+        FileNotFoundError: If the specified file does not exist.
+        Exception: If an error occurs during the loading process.
     """
     if not os.path.exists(file_path):
         logger.error(f"File not found: {file_path}")
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    if file_path.endswith('.json'):
-        try:
-            return pd.read_json(file_path, lines=True)
-        except Exception as e:
-            logger.error(f"Error loading JSON from {file_path}: {e}")
-            raise
-    elif file_path.endswith('.csv'):
-        try:
-            return pd.read_csv(file_path)
-        except Exception as e:
-            logger.error(f"Error loading CSV from {file_path}: {e}")
-            raise
-    else:
-        logger.error("Unsupported file format. Use JSON or CSV.")
-        raise ValueError("Unsupported file format. Use JSON or CSV.")
+    try:
+        logger.info(f"Loading data from CoNLL file: {file_path}")
+        data, tokens, labels = [], [], []
+        tokens_column, labels_column = columns
 
-def save_dataframe(data: pd.DataFrame, filename: str, output_dir: str, save_in_csv: bool = True, save_in_json: bool = False) -> None:
+        with open(file_path, mode='r', encoding='utf-8') as file:
+            
+            # lines = file.readlines()
+            # for line in lines:
+            for line in file:
+                line = line.strip()
+                if line:  # Non-empty line
+                    token, label = line.split("\t")
+                    tokens.append(token)
+                    labels.append(label)
+                else:  # Empty line (sentence separator)
+                    if tokens and labels:
+                        data.append({tokens_column: tokens, labels_column: labels})
+                        tokens, labels = [], []
+
+            # Add the last sentence if the file doesn't end with a blank line
+            if tokens and labels:
+                data.append({tokens_column: tokens, labels_column: labels})
+
+        if use_pandas:
+            data = pd.DataFrame(data)
+            logger.info(f"Loaded {len(data)} sentences from {file_path} using pandas.")
+        else:
+            logger.info(f"Loaded {len(data)} sentences from {file_path} without pandas.")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading CoNLL from {file_path}: {e}")
+        raise
+
+def save_conll(data: Union[List[Dict[str, List[str]]], pd.DataFrame], output_path: str, columns=["Tokens", "Labels"], use_pandas: bool = True) -> None:
     """
-    Saves the dataframe to a CSV and/or JSON file.
+    Saves data to a CoNLL file.
 
     Args:
-        data (pd.DataFrame): The dataframe to save.
-        filename (str): The base name of the file to save.
-        output_dir (str): The directory to save the file.
-        save_in_csv (bool, optional): If True, saves the dataframe to a CSV file. Defaults to True.
-        save_in_json (bool, optional): If True, saves the dataframe to a JSON file. Defaults to False.
+        data (Union[List[Dict[str, List[str]]], pd.DataFrame]): The data to be saved, either as a list of dictionaries or a pandas DataFrame.
+        output_path (str): The path where the CoNLL file will be saved.
+        columns (list, optional): A list of column names to use for the data. Defaults to ["Tokens", "Labels"]. 
+            Note: Only 1 or 2 columns are supported for saving to CoNLL format.
+        use_pandas (bool, optional): A flag indicating whether to use pandas for data saving. Defaults to True.
+
+    Raises:
+        ValueError: If 'columns' is empty or has more than 2 columns.
+        Exception: If an error occurs during the saving process.
     """
-    if not data:
-        logger.warning("No data to save for dataframe.")
-        return
-    
-    os.makedirs(output_dir, exist_ok=True)
-
-    if save_in_csv:
-        csv_output_path = os.path.join(output_dir, f"{filename}.csv")
-        try:
-            data.to_csv(csv_output_path, index=False)
-            logger.info(f"Data saved to {csv_output_path} successfully.")
-        except Exception as e:
-            logger.error(f"Error saving data to {csv_output_path}: {e}")
-
-    if save_in_json:
-        json_output_path = os.path.join(output_dir, f"{filename}.json")
-        try:
-            data.to_json(json_output_path, orient='records', lines=True, force_ascii=False)
-            logger.info(f"Data saved to {json_output_path} successfully.")
-        except Exception as e:
-            logger.error(f"Error saving data to {json_output_path}: {e}")
-
-def load_data(file_path: str):
-    """
-    Loads data from a JSON or CSV file into a Python object.
-
-    Args:
-        file_path (str): Path to the file to load.
-
-    Returns:
-        object: Loaded data.
-    """
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
-        raise FileNotFoundError(f"File not found: {file_path}")
-
-    if file_path.endswith('.json'):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                return json.load(file)
-        except Exception as e:
-            logger.error(f"Error loading JSON from {file_path}: {e}")
-            raise
-    elif file_path.endswith('.csv'):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                csv_reader = csv.DictReader(file)
-                return list(csv_reader)
-        except Exception as e:
-            logger.error(f"Error loading CSV from {file_path}: {e}")
-            raise
-    else:
-        logger.error("Unsupported file format. Use JSON or CSV.")
-        raise ValueError("Unsupported file format. Use JSON or CSV.")
-    
-def save_data(data, output_dir, filename, save_in_csv=True, save_in_json=False):
-    """
-    Saves the data to a CSV and/or JSON file.
-
-    Args:
-        data (list or pd.DataFrame): The data to save.
-        output_dir (str): The directory to save the file.
-        filename (str): The base name of the file to save.
-        save_in_csv (bool, optional): If True, saves the data to a CSV file. Defaults to True.
-        save_in_json (bool, optional): If True, saves the data to a JSON file. Defaults to False.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    
-    def save_to_file(file_path, content):
-        """
-        Saves content to a file.
-
-        Args:
-            file_path (str): The path to the file to save.
-            content (str): The content to write to the file.
-        """
-        try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            logger.info(f"Data saved to {file_path} successfully.")
-        except Exception as e:
-            logger.error(f"Error saving data to {file_path}: {e}")
-            raise
-    
-    if save_in_csv:
-        csv_output_path = os.path.join(output_dir, f"{filename}.csv")
-        csv_content = "\n".join([str(row) for row in data])
-        save_to_file(csv_output_path, csv_content)
+    try:
+        if not columns or len(columns) > 2:
+            logger.warning("'columns' must be provided and can have at most 2 columns. Using default columns: ['Tokens', 'Labels'].")
+            columns = ['Tokens', 'Labels']
         
-    if save_in_json:
-        json_output_path = os.path.join(output_dir, f"{filename}.json")
-        json_content = "\n\n".join([str(row) for row in data])
-        save_to_file(json_output_path, json_content)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        if use_pandas:
+            if isinstance(data, pd.DataFrame):
+                data = data.to_dict("records")
+            else:
+                data = pd.DataFrame(data).to_dict("records")
+        
+        with open(output_path, mode='w', encoding='utf-8') as file:
+            
+            for row in data:
+                if len(columns) == 1:
+                    for token, label in row[columns[0]]:
+                        file.write(f"{token}\t{label}\n")
+                    
+                elif len(columns) == 2:
+                    tokens_column, labels_column = columns
+                    for token, label in zip(row[tokens_column], row[labels_column]):
+                        file.write(f"{token}\t{label}\n")
+                file.write("\n")  # Separate rows/sentences with a blank line
+
+        logger.info(f"Data saved to {output_path} successfully.")
+    
+    except ValueError as e:
+        logger.error(f"Error saving data to {output_path}: {e}")
+        raise
+
+def load_data(file_path: str, use_pandas: bool = True) -> Union[List[Dict], Dict, pd.DataFrame]:
+    """
+    Loads data from a JSON, CSV, or CoNLL file.
+
+    Args:
+        file_path (str): Path to the file to load.
+        use_pandas (bool, optional): Whether to use pandas. Defaults to True.
+
+    Returns:
+        Union[List[Dict], Dict, pd.DataFrame]: Loaded data.
+
+    Raises:
+        ValueError: If the file format is unsupported.
+    """
+    if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    if file_path.endswith('.json'):
+        return load_json(file_path, use_pandas=use_pandas)
+    elif file_path.endswith('.csv'):
+        return load_csv(file_path, use_pandas=use_pandas)
+    elif file_path.endswith('.conll'):
+        return load_conll(file_path, use_pandas=use_pandas)
+    else:
+        logger.error("Unsupported file format. Use JSON, CSV, or CoNLL.")
+        raise ValueError("Unsupported file format. Use JSON, CSV, or CoNLL.")
+def save_data(data: Union[List[Dict], Dict, pd.DataFrame], filename: str, output_dir: str, format: str = 'csv', columns: list = [], use_pandas: bool = True) -> None:
+    """
+    Saves data to a CSV, JSON, or CoNLL file.
+
+    Args:
+        data (Union[List[Dict], Dict, pd.DataFrame]): Data to save.
+        filename (str): Base name of the file to save.
+        output_dir (str): Directory to save the file.
+        format (str, optional): Format to save the data ("csv", "json", or "conll"). Defaults to "csv".
+        columns (list, optional): A list of column names to use for the data. Defaults to an empty list.
+        use_pandas (bool, optional): Whether to use pandas. Defaults to True.
+
+    Raises:
+        ValueError: If the format is unsupported.
+    """
+    if format == 'csv':
+        save_csv(data, os.path.join(output_dir, f"{filename}.csv"), use_pandas=use_pandas)
+    elif format == 'json':
+        save_json(data, os.path.join(output_dir, f"{filename}.json"), use_pandas=use_pandas)
+    elif format == 'conll':
+        save_conll(data, os.path.join(output_dir, f"{filename}.conll"), columns=columns, use_pandas=use_pandas)
+    else:
+        logger.error(f"Unsupported format: {format}. Use 'csv', 'json', or 'conll'.")
+        raise ValueError(f"Unsupported format: {format}. Use 'csv', 'json', or 'conll'.")

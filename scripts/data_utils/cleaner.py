@@ -123,7 +123,7 @@ def clean_text_pipeline(text: str) -> str:
     # Apply cleaning steps
     text = normalize_amharic_text(text, amharic_diacritics_map)
     text = remove_non_amharic_characters(text)
-    text = remove_punctuation(text)
+    # text = remove_punctuation(text)
     text = remove_emojis(text)
     text = remove_repeated_characters(text)
     text = remove_urls(text)

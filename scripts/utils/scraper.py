@@ -35,6 +35,8 @@ logger = setup_logger("scraper")
 
 CONFIG_PATH = os.path.join('..', 'resources', 'configs')
 config_filepath = os.path.join(CONFIG_PATH, 'config.json')
+channels_filepath = os.path.join(CONFIG_PATH, 'channels.json')
+
 config = load_json(config_filepath)
 
 API_ID = config['API_ID']
@@ -43,7 +45,7 @@ PHONE_NUMBER = config['PHONE_NUMBER']
 # BOT_TOKEN = config['BOT_TOKEN']
 
 SESSION_FILE = os.path.join('..', 'fetching-E-commerce-data.session')
-DATA_PATH = os.path.join('resources', 'data')
+DATA_PATH = os.path.join('..', 'resources', 'data')
 OUTPUT_DIR = os.path.join(DATA_PATH, 'raw')
 MEDIA_DIR = os.path.join(DATA_PATH, 'photos')
 
@@ -94,8 +96,10 @@ async def fetch_messages(client: TelegramClient, channel_username: str, limit: i
             # Append media if present
             logger.info(f"Multiple photos {str(message.id)} {str(message.grouped_id)}")
             if message.media:
-                if(hasattr(message.media, 'photo') or
-                    (hasattr(message.media, 'document') and message.media.document.mime_type)):
+                if(
+                    hasattr(message.media, 'photo')
+                    # or (hasattr(message.media, 'document') and message.media.document.mime_type)
+                ):
                     medias.append(message)
                     message_entry["Media Path"].append(None)
 
@@ -114,8 +118,6 @@ async def scrape_channel_with_photos(medias: List[Message], messages: List[dict]
 
         if medias:
             media_paths = await download_media(medias, channel_media_dir)
-
-            logger.error(f"Media paths {medias}, {media_paths}")
 
             # Create a lookup for efficient media path assignment
             media_id_to_path = {media.id: path for media, path in zip(medias, media_paths)}
@@ -332,14 +334,17 @@ def run_fetch_process(channels, output_dir=OUTPUT_DIR, media_dir=MEDIA_DIR, limi
 
 if __name__ == "__main__":
     
-    # List of channels to scrape
-    CHANNELS = [
-        "ZemenExpress", "nevacomputer", "meneshayeofficial", "ethio_brand_collection", "Leyueqa",
-        "sinayelj", "Shewabrand", "helloomarketethiopia", "modernshoppingcenter", "qnashcom",
-        "Fashiontera", "kuruwear", "gebeyaadama", "MerttEka", "forfreemarket", "classybrands",
-        "marakibrand", "aradabrand2", "marakisat2", "belaclassic", "AwasMart", "qnashcom"
-    ]
+    # CHANNELS = [
+    #     "ZemenExpress", "nevacomputer", "meneshayeofficial", "ethio_brand_collection", "Leyueqa",
+    #     "sinayelj", "Shewabrand", "helloomarketethiopia", "modernshoppingcenter", "qnashcom",
+    #     "Fashiontera", "kuruwear", "gebeyaadama", "MerttEka", "forfreemarket", "classybrands",
+    #     "marakibrand", "aradabrand2", "marakisat2", "belaclassic", "AwasMart", "qnashcom"
+    # ]
     
+    # Load a list of channels from a JSON file to scrape from
+    channels = load_json(channels_filepath)
+    CHANNELS = channels.get('CHANNELS', [])
+
     # Run only for selected channels
     LIMIT = 500
     run_fetch_process(channels=CHANNELS[10:15], limit=LIMIT)

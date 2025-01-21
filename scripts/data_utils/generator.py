@@ -1,8 +1,9 @@
-from ast import Assign
 import os
 import re
 import sys
 import pandas as pd
+from typing import Dict
+from multiprocessing import Pool, cpu_count
 
 # Setup logger
 sys.path.append(os.path.join(os.path.abspath(__file__), '..', '..', '..'))
@@ -68,133 +69,56 @@ def assign_entity_labels(tokens, patterns=PATTERNS):
         logger.error(f"Error assigning entity labels: {e}")
         raise
 
-def generate_labels(data, column, patterns):
+def tokenize_and_label(message: str, patterns: Dict[str, re.Pattern]) -> tuple:
     """
-    Generates entity labels for tokens in the specified column of a DataFrame.
+    Tokenizes a message and assigns entity labels to the tokens.
 
     Args:
-        data (pd.DataFrame): The dataset.
+        message (str): The input message.
+        patterns (Dict[str, re.Pattern]): Patterns for labeling entities.
+
+    Returns:
+        tuple: A tuple containing (tokens, labels, tokens_labels).
+    """
+    tokens = tokenize_text(message)
+    labels = assign_entity_labels(tokens, patterns)
+    tokens_labels = list(zip(tokens, labels))
+    return tokens, labels, tokens_labels
+
+def generate_labels(data: pd.DataFrame, column: str, patterns: Dict[str, re.Pattern]) -> pd.DataFrame:
+    """
+    Generates entity labels for tokens in the specified column of a DataFrame and appends the results to the DataFrame.
+
+    Args:
+        data (pd.DataFrame): The input dataset.
         column (str): Column name containing the text messages.
         patterns (Dict[str, re.Pattern]): Patterns for labeling entities.
 
     Returns:
-        pd.DataFrame: Updated DataFrame with token and label columns.
+        pd.DataFrame: Updated DataFrame with appended token and label columns.
     """
     try:
         logger.info("Starting to generate labels.")
-        labeled_data = []
 
-        for message in data[column]:
-            tokens = tokenize_text(message)
-            labels = assign_entity_labels(tokens, patterns)
-            labeled_data.append({"Message": message, "Tokens": tokens, "Labels": labels, "Tokens_Labels": list(zip(tokens, labels))})
+        data = data.copy()
+        # Use multiprocessing to process messages in parallel
+        with Pool(cpu_count()) as pool:
+            results = pool.starmap(
+                tokenize_and_label,
+                [(message, patterns) for message in data[column]]
+            )
 
-        logger.info("Finished generating labels.")
-        return pd.DataFrame(labeled_data)
+        # Unpack results into separate lists
+        tokens_list, labels_list, tokens_labels_list = zip(*results)
+
+        # Append the new columns to the input DataFrame
+        data["Tokens"] = tokens_list
+        data["Labels"] = labels_list
+        data["Tokens_Labels"] = tokens_labels_list
+
+        logger.info("Finished generating labels and appending to DataFrame.")
+        return data
+
     except Exception as e:
         logger.error(f"Error generating labels: {e}")
-        raise
-
-def save_conll_format(data, output_file, column=None, columns=None):
-    """
-    Saves labeled tokens and their entities in CoNLL format.
-
-    Args:
-        data (pd.DataFrame): DataFrame containing tokens and labels.
-        output_file (str): Path to save the CoNLL formatted output.
-        column (str, optional): The column containing the labeled data. Defaults to None.
-        columns (tuple or list, optional): A tuple or list containing two column names for tokens and labels. Defaults to None.
-    """
-    try:
-        if not column and not columns:
-            raise ValueError("Either 'column' or 'columns' must be provided.")
-        logger.info(f"Saving labeled data to {output_file} in CoNLL format.")
-        with open(output_file, "w", encoding="utf-8") as f:
-            for _, row in data.iterrows():
-                if column:
-                    for token, label in row[column]:
-                        f.write(f"{token}\t{label}\n")
-                elif columns:
-                    token_column, label_column = columns
-                    for token, label in zip(row[token_column], row[label_column]):
-                        f.write(f"{token}\t{label}\n")
-                f.write("\n")
-        logger.info(f"Labeled data successfully saved to {output_file}.")
-    except Exception as e:
-        logger.error(f"Error saving CoNLL format: {e}")
-        raise
-
-def save_labels(tokens, labels, filename, out_dir, save_csv=True, save_json=False):
-    """
-    Saves the final tokens and labels to a CSV, JSON, and/or CoNLL file.
-
-    Args:
-        tokens (list): List of tokens.
-        labels (list): List of labels.
-        filename (str): Base name of the file to save.
-        out_dir (str): Directory to save the file.
-        save_csv (bool): If True, saves the data to a CSV file.
-        save_json (bool): If True, saves the data to a JSON file.
-    """
-    try:
-        df = pd.DataFrame({'Tokens': tokens, 'Labels': labels})
-        os.makedirs(out_dir, exist_ok=True)
-
-        conll_output_path = os.path.join(out_dir, f"{filename}.conll")
-        with open(conll_output_path, "w", encoding="utf-8") as f:
-            for token, label in zip(tokens, labels):
-                f.write(f"{token}\t{label}\n")
-        logger.info(f"Labels saved to CoNLL file: {conll_output_path}")
-    
-        if save_csv:
-            csv_output_path = os.path.join(out_dir, f"{filename}.csv")
-            df.to_csv(csv_output_path, index=False)
-            logger.info(f"Labels saved to CSV file: {csv_output_path}")
-        if save_json:
-            json_output_path = os.path.join(out_dir, f"{filename}.json")
-            df.to_json(json_output_path, orient='records', lines=True, force_ascii=False)
-            logger.info(f"Labels saved to JSON file: {json_output_path}")
-        
-    except Exception as e:
-        logger.error(f"Error saving labels: {e}")
-        raise
-    
-def load_conll_data(file_path):
-    """
-    Loads CoNLL formatted data from a file and returns it as a DataFrame.
-
-    Args:
-        file_path (str): Path to the CoNLL formatted file.
-
-    Returns:
-        pd.DataFrame: DataFrame containing the loaded data with 'tokens' and 'labels' columns.
-    """
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        
-        sentences = []
-        labels = []
-        current_sentence = []
-        current_labels = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:  # Sentence boundary
-                if current_sentence:
-                    sentences.append(current_sentence)
-                    labels.append(current_labels)
-                    current_sentence = []
-                    current_labels = []
-            else:
-                token, tag = line.split()
-                current_sentence.append(token)
-                current_labels.append(tag)
-        
-        return pd.DataFrame({"tokens": sentences, "labels": labels})
-    except FileNotFoundError:
-        logger.error(f"File not found: {file_path}")
-        raise
-    except Exception as e:
-        logger.error(f"Error loading CoNLL data: {e}")
         raise
