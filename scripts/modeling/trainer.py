@@ -132,3 +132,60 @@ def train_ner_model(data_path: str, output_dir: str = MODEL_OUTPUT_DIR, model_na
     except Exception as e:
         logger.error(f"Error during model training: {e}")
         raise
+
+
+import os
+import pandas as pd
+from transformers import AutoTokenizer, AutoModelForTokenClassification
+from scripts.modeling.train_ner_model import train_ner_model
+
+
+def fine_tune_multiple_models(models: list, dataset_dir: str, base_output_dir: str, params: dict) -> pd.DataFrame:
+    """
+    Fine-tunes multiple models for NER and evaluates their performance.
+
+    Args:
+    - models (list): List of model names (e.g., "xlm-roberta-base").
+    - dataset_dir (str): Path to the directory containing the datasets.
+    - base_output_dir (str): Base directory to save fine-tuned models.
+    - params (dict): Dictionary of training parameters:
+        - "learning_rate": Learning rate for training.
+        - "epochs": Number of epochs.
+        - "batch_size": Batch size.
+
+    Returns:
+    - pd.DataFrame: Performance metrics for all models.
+    """
+    results = []
+
+    for model_name in models:
+        print(f"\n[INFO] Fine-tuning model: {model_name}")
+        output_dir = os.path.join(base_output_dir, model_name.replace("/", "_"))
+
+        # Fine-tune the model
+        train_ner_model(
+            model_name=model_name,
+            dataset_dir=dataset_dir,
+            output_dir=output_dir,
+            learning_rate=params["learning_rate"],
+            epochs=params["epochs"],
+            batch_size=params["batch_size"],
+        )
+
+        # Load validation results
+        eval_results_path = os.path.join(output_dir, "trainer_state.json")
+        if os.path.exists(eval_results_path):
+            import json
+            with open(eval_results_path, "r") as f:
+                eval_results = json.load(f)
+            eval_metrics = eval_results.get("metrics", {}).get("eval", {})
+            eval_metrics["model_name"] = model_name
+            results.append(eval_metrics)
+
+    # Create a DataFrame for comparison
+    results_df = pd.DataFrame(results)
+    results_df = results_df.sort_values(by="eval_f1", ascending=False)
+    results_df.to_csv(os.path.join(base_output_dir, "model_comparison_results.csv"), index=False)
+
+    print("\n[INFO] Model comparison complete. Results saved.")
+    return results_df
