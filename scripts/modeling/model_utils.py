@@ -9,7 +9,7 @@ from typing import Dict, List, Tuple, Union, Optional
 
 import sentencepiece as spm
 from amseg.amharicSegmenter import AmharicSegmenter
-from datasets import Dataset, DatasetDict, load_dataset, ClassLabel
+from datasets import Dataset, DatasetDict, load_dataset
 from transformers import AutoTokenizer, AutoModelForTokenClassification, DataCollatorForTokenClassification
 
 # Setup logger for data_loader
@@ -166,7 +166,7 @@ def save_conll_file(data: List[List[str]], file_path: str):
             f.writelines(line + "\n" for line in sentence)
             f.write("\n")  # Sentence boundary
 
-def load_conll_data(data_dir: str, use_hf_load_dataset: bool = True) -> DatasetDict:
+def load_conll_datasets(data_dir: str, use_hf_load_dataset: bool = True) -> DatasetDict:
     """
     Load data from CoNLL files into a DatasetDict.
 
@@ -300,27 +300,6 @@ def initialize_amharic_segmenter(sent_punct: List[str] = [], word_punct: List[st
         logger.error(f"Error during AmharicSegmenter initialization: {e}")
         raise
 
-def map_and_format_datasets(label_mapping: Dict[str, int]) -> ClassLabel:
-    """
-    Maps and formats datasets using the provided label mapping.
-
-    Args:
-        label_mapping (Dict[str, int]): A dictionary mapping string labels to integer IDs.
-
-    Returns:
-        ClassLabel: A ClassLabel instance with the provided label mapping.
-
-    Raises:
-        ValueError: If the label mapping is invalid or empty.
-    """
-    if not label_mapping:
-        raise ValueError("Label mapping cannot be empty.")
-    try:
-        return ClassLabel(names=label_mapping)
-    except Exception as e:
-        logger.error(f"Error during dataset mapping and formatting: {e}")
-        raise
-
 def convert_df_to_dataset(data: pd.DataFrame) -> Dataset:
     """
     Converts a pandas DataFrame to a Hugging Face Dataset.
@@ -337,7 +316,10 @@ def convert_df_to_dataset(data: pd.DataFrame) -> Dataset:
         logger.error(f"Error converting DataFrame to dataset: {e}")
         raise
 
-def separate_tokens_and_labels(data: Union[pd.DataFrame, pd.Series], columns: List[str] = ['Tokens', 'Labels']) -> Tuple[List[str], List[str]]:
+def separate_tokens_and_labels(
+    data: Union[pd.DataFrame, pd.Series], 
+    columns: List[str] = ['Tokens', 'Labels']
+) -> Tuple[List[List[str]], List[List[str]]]:
     """
     Separates tokens and labels from a DataFrame or Series of strings.
 
@@ -346,7 +328,7 @@ def separate_tokens_and_labels(data: Union[pd.DataFrame, pd.Series], columns: Li
         columns (List[str], optional): A list of column names to use for the data. Defaults to ['Tokens', 'Labels'].
 
     Returns:
-        Tuple[List[str], List[str]]: A tuple containing tokens and labels.
+        Tuple[List[List[str]], List[List[str]]]: A tuple containing tokens and labels as lists of lists (one list per sentence).
 
     Raises:
         ValueError: If 'columns' is empty, has more than 2 columns, or the input data type is unsupported.
@@ -364,15 +346,23 @@ def separate_tokens_and_labels(data: Union[pd.DataFrame, pd.Series], columns: Li
             if columns[0] not in data.columns or columns[1] not in data.columns:
                 raise ValueError(f"Columns {columns} not found in the DataFrame.")
             
-            all_tokens = data[columns[0]].explode().tolist()
-            all_labels = data[columns[1]].explode().tolist()
+            # Ensure tokens and labels are lists of lists (one list per sentence)
+            all_tokens = data[columns[0]].tolist()
+            all_labels = data[columns[1]].tolist()
 
         elif isinstance(data, pd.Series):
+            # Convert Series to DataFrame
             temp_data = pd.DataFrame.from_records(data.explode().tolist(), columns=columns)
             all_tokens = temp_data[columns[0]].tolist()
             all_labels = temp_data[columns[1]].tolist()
         else:
             raise ValueError("Unsupported data type. Expected a DataFrame or Series.")
+
+        # Ensure tokens and labels are lists of lists (one list per sentence)
+        if not all(isinstance(tokens, list) for tokens in all_tokens):
+            all_tokens = [tokens if isinstance(tokens, list) else [tokens] for tokens in all_tokens]
+        if not all(isinstance(labels, list) for labels in all_labels):
+            all_labels = [labels if isinstance(labels, list) else [labels] for labels in all_labels]
 
         logger.info("Finished separating tokens and labels from the data.")
         return all_tokens, all_labels
