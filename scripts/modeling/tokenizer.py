@@ -1,8 +1,12 @@
 import os
 import sys
-from typing import List, Tuple, Union, Dict, Optional
+import json
+import joblib
+import numpy as np
+from typing import List, Dict, Tuple, Union, Optional, Generator
 
 import sentencepiece as spm
+from datasets import ClassLabel
 from transformers import AutoTokenizer
 from amseg.amharicSegmenter import AmharicSegmenter
 
@@ -18,27 +22,44 @@ class Tokenizer:
     Supports Hugging Face and custom tokenization methods.
     """
 
-    def __init__(self, tokenizer: Union[AutoTokenizer, "AmharicSegmenter"], max_length: int = 128, label_id_mapping: Optional[Dict[str, int]] = None):
+    def __init__(
+        self,
+        tokenizer: Union[AutoTokenizer, "AmharicSegmenter"],
+        max_length: int = 128,
+        ner_tags: Optional[List[str]] = None,
+        special_tokens: Optional[List[str]] = None,
+    ):
         """
         Initializes the Tokenizer with a tokenizer instance, max sequence length, and label mapping.
 
         Args:
             tokenizer (Union[AutoTokenizer, AmharicSegmenter]): Tokenizer instance.
             max_length (int): Maximum sequence length for tokenization.
-            label_id_mapping (Optional[Dict[str, int]]): Mapping of string labels to integer IDs.
+            ner_tags (Optional[List[str]]): List of string tags.
+            special_tokens (Optional[List[str]]): List of special tokens.
         """
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.label_id_mapping = label_id_mapping or {"O": 0}  # Default mapping for "O"
+        self.ner_tags = ner_tags or ["O"]
+        self.special_tokens = special_tokens or ["[CLS]", "[SEP]", "[PAD]", "[UNK]"]
+
+        # Combine labels and special tokens into a single ClassLabel instance        
+        all_labels = self.ner_tags + self.special_tokens
+        label_id_mapping = self._create_label_id_mapping(all_labels)
+        self.label_id_mapping = {label: label_id_mapping.str2int(label) for label in label_id_mapping.names}
+
         logger.info(f"Tokenizer initialized with max length: {self.max_length}")
 
-    def _validate_inputs(self, tokens: List[str], labels: Optional[List[str]] = None) -> None:
+    def _validate_inputs(self, tokens: List[str], labels: Optional[List[str]] = None) -> Tuple[List[List[str]], List[List[str]]]:
         """
         Validates input tokens and labels.
 
         Args:
             tokens (List[str]): List of tokens.
-            labels (Optional[List[str]): NER labels corresponding to tokens.
+            labels (Optional[List[str]]): NER labels corresponding to tokens.
+
+        Returns:
+            Tuple[List[List[str]], List[List[str]]]: Batched tokens and labels.
 
         Raises:
             ValueError: If tokens or labels are invalid.
@@ -48,8 +69,49 @@ class Tokenizer:
         if labels is not None:
             if not labels:
                 raise ValueError("Labels must not be empty.")
-            if len(tokens) != len(labels):  # Check against the first list of labels
-                raise ValueError("Tokens and labels must have the same length.")
+        if isinstance(tokens[0], list) and isinstance(labels[0], list):  # Batched inputs
+            if len(tokens) != len(labels):
+                raise ValueError("Mismatched number of token and label sequences.")
+        elif isinstance(tokens[0], str) and isinstance(labels[0], str):  # Single sequence
+            tokens, labels = [tokens], [labels]
+        else:
+            raise ValueError("Tokens and labels must both be either lists or lists of lists.")
+
+        return tokens, labels
+
+    def _create_label_id_mapping(self, labels: List[str]) -> ClassLabel:
+        """
+        Creates a ClassLabel instance from the provided label mapping.
+
+        Args:
+            labels (List[str]): List of string labels.
+
+        Returns:
+            ClassLabel: A ClassLabel instance for label-to-ID mapping.
+
+        Raises:
+            ValueError: If the label list is empty.
+        """
+        if not labels:
+            raise ValueError("Label list cannot be empty.")
+        try:
+            return ClassLabel(names=labels)
+        except Exception as e:
+            logger.error(f"Error when creating label mapping: {e}")
+            raise
+
+    def _set_label_id_mapping(self, labels: List[str]) -> ClassLabel:
+        """
+        Sets a ClassLabel instance to tokenizer instance from the provided label mapping.
+        """
+        if not labels:
+            raise ValueError("Label list cannot be empty.")
+        try:
+            self.label_id_mapping = self._create_label_id_mapping(labels)
+            return self.label_id_mapping
+        except Exception as e:
+            logger.error(f"Error when creating label mapping: {e}")
+            raise
 
     def _tokenize_input(self, tokens: List[str]) -> Dict:
         """
@@ -70,65 +132,6 @@ class Tokenizer:
             return_tensors="pt" if self.tokenizer.is_fast else "np",  # NumPy fallback
         )
 
-    def _convert_labels_to_ids(self, labels: List[str]) -> List[int]:
-        """
-        Converts string labels to integer IDs using the label_id_mapping.
-
-        Args:
-            labels (List[str]): List of string labels.
-
-        Returns:
-            List[int]: List of integer label IDs.
-        """
-        return [self.label_id_mapping.get(label, -100) for label in labels]
-
-    def align_labels_with_tokens_hf(self, tokens: List[str], labels: List[str]) -> Tuple[List[str], List[str], List[int]]:
-        """
-        Aligns labels with tokenized tokens and returns aligned tokens, labels, and Hugging Face labels.
-
-        Args:
-            tokens (List[str]): List of input tokens.
-            labels (List[str]): List of labels corresponding to the input tokens.
-
-        Returns:
-            Tuple[List[str], List[str], List[int]]: Aligned tokens, aligned labels, and Hugging Face labels.
-        """
-        # Tokenize the input tokens
-        tokenized_inputs = self._tokenize_input(tokens)
-        
-        # Get word IDs for each token
-        word_ids = tokenized_inputs.word_ids() if self.tokenizer.is_fast else self._get_word_ids_from_slow_tokenizer(tokenized_inputs)
-
-        aligned_tokens, aligned_labels, hf_labels = [], [], []
-        previous_word_idx = None
-        input_ids = tokenized_inputs["input_ids"][0]  # Access the first sequence (batch size = 1)
-
-        for idx, word_idx in enumerate(word_ids):
-            if word_idx is None:  # Special tokens ([CLS], [SEP], [PAD])
-                aligned_tokens.append(self.tokenizer.convert_ids_to_tokens(input_ids[idx].item()))  # Convert token ID to token
-                # aligned_tokens.append(self.tokenizer.convert_ids_to_tokens(input_ids[idx].row()))  # Convert token ID to token
-                aligned_labels.append("O")  # Use "O" for special tokens
-                hf_labels.append(-100)  # Ignore special tokens during loss calculation
-            
-            else:
-                if word_idx != previous_word_idx:  # First token of a word
-                    aligned_tokens.append(tokens[word_idx])
-                    aligned_labels.append(labels[word_idx])
-                    hf_labels.append(self.label_id_mapping.get(labels[word_idx], -100))  # Map label to ID or use -100
-
-                else:  # Subsequent tokens of the same word
-                    aligned_tokens.append(self.tokenizer.convert_ids_to_tokens(input_ids[idx].item()))
-                    # aligned_tokens.append(self.tokenizer.convert_ids_to_tokens(input_ids[idx].row()))
-                    aligned_labels.append(labels[word_idx])  # Inherit the label from the first token
-                    hf_labels.append(-100)  # Ignore during loss calculation
-
-            previous_word_idx = word_idx
-
-        # Add Hugging Face-compatible labels to tokenized_tokens
-        tokenized_inputs["labels"] = hf_labels
-
-        return aligned_tokens, aligned_labels, tokenized_inputs
-
     def _get_word_ids_from_slow_tokenizer(self, tokenized_inputs) -> List[Optional[int]]:
         """
         Mimics the behavior of `word_ids()` for slow tokenizers.
@@ -141,85 +144,172 @@ class Tokenizer:
             List[Optional[int]]: List of word IDs aligned with tokenized tokens.
         """
         word_ids = []
-        current_word_idx = 0
+        current_word_id = 0
         for token in tokenized_inputs["input_ids"][0]:
             token = self.tokenizer.convert_ids_to_tokens(token.item())  # Convert token ID to string
             if token.startswith("##"):  # Subword token
-                word_ids.append(current_word_idx)
+                word_ids.append(current_word_id)
             elif token in self.tokenizer.all_special_tokens:  # Special token
                 word_ids.append(None)
             else:  # New word
-                word_ids.append(current_word_idx)
-                current_word_idx += 1
+                word_ids.append(current_word_id)
+                current_word_id += 1
         return word_ids
 
-
-    def align_labels_with_tokens_generic(self, tokens: List[str], labels: List[str]) -> Tuple[List[str], List[str]]:
+    def align_labels_with_tokens_hf(self, tokens: List[str], labels: List[str]) -> Dict:
         """
-        Aligns the original labels with the tokenized tokens.
+        Aligns labels with tokenized tokens and returns aligned tokens, labels, and Hugging Face labels.
 
         Args:
-            tokens (List[str]): Original tokens.
-            labels (List[str]): Labels corresponding to the original tokens.
+            tokens (List[str]): List of input tokens.
+            labels (List[str]): List of labels corresponding to the input tokens.
 
         Returns:
-            Tuple[List[str], List[str]]: Aligned tokens and aligned labels.
-
-        Raises:
-            Exception: If label alignment fails.
+            Dict: Tokenized tokens with aligned labels.
         """
-        try:
-            aligned_labels, aligned_tokens = [], []
-            token_idx = 0
+        # Tokenize the input tokens
+        tokenized_inputs = self._tokenize_input(tokens)
 
-            for token, label in zip(tokens, labels):
-                # Tokenize the current token to get its subtokens
-                if hasattr(self.tokenizer, "amharic_tokenizer"):
-                    subtokens = self.tokenizer.amharic_tokenizer(token)
-                else:
-                    subtokens = self.tokenizer.tokenize(token)
+        # Get word IDs for each token
+        word_ids = tokenized_inputs.word_ids() if self.tokenizer.is_fast else self._get_word_ids_from_slow_tokenizer(tokenized_inputs)
 
-                # Add subtokens to aligned_tokens
-                aligned_tokens.extend(subtokens)
+        aligned_labels = []
+        previous_word_id = None
 
-                # Assign the label to the first subtoken and "O" to subsequent subtokens
-                aligned_labels.append(label)
-                aligned_labels.extend(["O"] * (len(subtokens) - 1))
+        for word_id in word_ids:
+            if word_id is None:  # Special tokens ([CLS], [SEP], [PAD])
+                aligned_labels.append(-100)  # Ignore special tokens during loss calculation
+            else:
+                if word_id != previous_word_id:  # First token of a word
+                    # Map label to ID or use -100
+                    aligned_labels.append(self.label_id_mapping.get(labels[word_id], -100))
+                    previous_word_id = word_id
+                else:  # Subsequent tokens of the same word
+                    aligned_labels.append(-100)  # Ignore during loss calculation
 
-                # Update token_idx to point to the next token
-                token_idx += len(subtokens)
+        # Add Hugging Face-compatible labels to tokenized_tokens
+        tokenized_inputs["labels"] = aligned_labels
 
-            logger.info("Tokens and labels aligned successfully.")
-            return aligned_tokens, aligned_labels
+        return tokenized_inputs
 
-        except Exception as e:
-            logger.error(f"Error during label alignment: {e}")
-            raise
-
-    def tokenize_and_align_labels(self, tokens: List[str], labels: List[str], use_hf: bool = False) -> Union[Tuple[List[str], List[str]], Dict]:
+    def _custom_tokenize_and_align_labels(
+        self, tokens: List[List[str]], labels: List[List[str]], max_length: int
+    ) -> Generator[Dict[str, List[int]], None, None]:
         """
-        Unified method to tokenize and align labels based on the selected approach.
+        Tokenizes sentences with a custom segmenter and aligns labels for NER task.
+        Converts tokens to input IDs using the label mapping.
 
         Args:
-            tokens (List[str]): List of tokens.
-            labels (List[str]): NER labels corresponding to tokens.
-            use_hf (bool): Whether to use the Hugging Face approach.
+            tokens (List[List[str]]): Nested list of sentences tokenized as words.
+            labels (List[List[str]]): Nested list of corresponding labels for sentences.
+            max_length (int): Maximum sequence length for the model.
+
+        Yields:
+            Dict[str, List[int]]: A dictionary with input_ids, attention_mask, and labels.
+        """
+        # Cache for tokenized words to avoid redundant tokenization
+        token_cache = {}
+
+        # Process sentences in batches
+        for sentence_tokens, sentence_labels in zip(tokens, labels):
+            segmented_tokens = []
+            aligned_labels = []
+
+            # Tokenize all words in the sentence (batch tokenization if supported)
+            if hasattr(self.tokenizer, "batch_tokenize"):
+                subtoken_batches = self.tokenizer.batch_tokenize(sentence_tokens)
+            else:
+                subtoken_batches = []
+                for word in sentence_tokens:
+                    if word in token_cache:
+                        subtokens = token_cache[word]
+                    else:
+                        subtokens = (
+                            self.tokenizer.amharic_tokenizer(word) if hasattr(self.tokenizer, "amharic_tokenizer")
+                            else self.tokenizer.tokenize(word)
+                        )
+                        token_cache[word] = subtokens
+                    subtoken_batches.append(subtokens)
+
+            # Align labels and tokens
+            for word, label, subtokens in zip(sentence_tokens, sentence_labels, subtoken_batches):
+                segmented_tokens.extend(subtokens)
+                aligned_labels.extend([label] + ["O"] * (len(subtokens) - 1))
+            
+            # Convert tokens to input IDs
+            input_ids = [self.label_id_mapping.get("[CLS]", 0)] + \
+                        [self.label_id_mapping.get(token, self.label_id_mapping.get("[UNK]", 0)) for token in segmented_tokens] + \
+                        [self.label_id_mapping.get("[SEP]", 0)]
+
+            # Align labels and convert to IDs
+            aligned_labels = [-100] + [self.label_id_mapping.get(label, -100) for label in aligned_labels] + [-100]
+
+            # Generate attention mask
+            attention_mask = [1] * len(input_ids)
+
+            # Truncate and pad to max_length using NumPy for vectorized operations
+            input_ids = np.array(input_ids[:max_length], dtype=np.int32)
+            attention_mask = np.array(attention_mask[:max_length], dtype=np.int32)
+            aligned_labels = np.array(aligned_labels[:max_length], dtype=np.int32)
+
+            padding_length = max_length - len(input_ids)
+            input_ids = np.pad(input_ids, (0, padding_length), constant_values=self.label_id_mapping.get("[PAD]", 0))
+            attention_mask = np.pad(attention_mask, (0, padding_length), constant_values=0)
+            aligned_labels = np.pad(aligned_labels, (0, padding_length), constant_values=-100)
+
+            # Yield processed data as a dictionary
+            yield {
+                "input_ids": input_ids.tolist(),
+                "attention_mask": attention_mask.tolist(),
+                "labels": aligned_labels.tolist()
+            }
+
+    def tokenize_and_align_labels(
+        self,
+        tokens: Union[List[str], List[List[str]]],
+        labels: Union[List[str], List[List[str]]],
+        use_hf: bool = False,
+    ) -> Dict[str, List[List[int]]]:
+        """
+        Unified method to tokenize and align labels based on the tokenizer type.
+
+        Args:
+            tokens (Union[List[str], List[List[str]]]): Input tokens or tokenized sentences.
+            labels (Union[List[str], List[List[str]]]): NER labels corresponding to tokens.
+            use_hf (bool): Whether to use Hugging Face tokenization logic.
 
         Returns:
-            Union[Tuple[List[str], List[str]], Dict]: Tokenized tokens and aligned labels or Hugging Face-compatible inputs.
-
-        Raises:
-            Exception: If tokenization or alignment fails.
+            Dict[str, List[List[int]]]: Tokenized tokens and aligned labels, ready for model input.
         """
         try:
             # Validate inputs
-            self._validate_inputs(tokens, labels)
+            tokens, labels = self._validate_inputs(tokens, labels)
 
             if use_hf:
-                return self.align_labels_with_tokens_hf(tokens, labels)
+                aligned_data = {
+                    "input_ids": [],
+                    "attention_mask": [],
+                    "labels": []
+                }
+                for sentence_tokens, sentence_labels in zip(tokens, labels):
+                    tokenized_inputs = self.align_labels_with_tokens_hf(sentence_tokens, sentence_labels)
+                    aligned_data["input_ids"].append(tokenized_inputs["input_ids"][0].tolist())
+                    aligned_data["attention_mask"].append(tokenized_inputs["attention_mask"][0].tolist())
+                    aligned_data["labels"].append(tokenized_inputs["labels"])
+                return aligned_data
             else:
-                aligned_tokens, aligned_labels = self.align_labels_with_tokens_generic(tokens, labels)
-                return aligned_tokens, aligned_labels, aligned_tokens  # Return tokenized tokens for consistency
+                # Collect generator output into a single dictionary
+                aligned_data = {
+                    "input_ids": [],
+                    "attention_mask": [],
+                    "labels": []
+                }
+                for processed_sentence in self._custom_tokenize_and_align_labels(tokens, labels, self.max_length):
+                    aligned_data["input_ids"].append(processed_sentence["input_ids"])
+                    aligned_data["attention_mask"].append(processed_sentence["attention_mask"])
+                    aligned_data["labels"].append(processed_sentence["labels"])
+                return aligned_data
+
         except Exception as e:
             logger.error(f"Error during tokenization and label alignment: {e}")
             raise
