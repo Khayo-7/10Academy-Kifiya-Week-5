@@ -5,82 +5,62 @@ import yaml
 import torch
 import random
 import pandas as pd
-from typing import Dict, List, Tuple, Union, Optional
+from typing import List, Dict, Tuple, Union, Generator
 
 import sentencepiece as spm
+from datasets import ClassLabel
 from amseg.amharicSegmenter import AmharicSegmenter
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
 from transformers import AutoTokenizer, AutoModelForTokenClassification, DataCollatorForTokenClassification
 
 # Setup logger for data_loader
 sys.path.append(os.path.join(os.path.abspath(__file__), '..', '..', '..'))
 from scripts.utils.logger import setup_logger
+from scripts.modeling.tokenizer import Tokenizer
+from scripts.data_utils.loaders import load_json, save_json
 
 logger = setup_logger("model_utils")
 
 # Utility functions
-def tokenize_and_align_labels(examples: Dict, tokenizer: AutoTokenizer) -> Dict:
+def parse_conll(file_path: str) -> Generator[Dict[str, List[str]], None, None]:
     """
-    Tokenize inputs and align labels for token classification.
-
-    Args:
-        examples (Dict): Input examples containing tokens and labels.
-        tokenizer (AutoTokenizer): Tokenizer to use for tokenization.
-
-    Returns:
-        Dict: Tokenized inputs with aligned labels.
-    """
-    try:
-        tokenized_inputs = tokenizer(
-            examples["tokens"], truncation=True, is_split_into_words=True, max_length=128
-        )
-        labels = [
-            [-100 if word_id is None else label[word_id] for word_id in tokenized_inputs.word_ids(batch_index=i)]
-            for i, label in enumerate(examples["labels"])
-        ]
-        tokenized_inputs["labels"] = labels
-        return tokenized_inputs
-    except Exception as e:
-        logger.error(f"Error during tokenization and label alignment: {e}")
-        raise
-
-def parse_conll(file_path: str) -> Dataset:
-    """
-    Parse a CoNLL file into a Hugging Face Dataset.
+    Parse a CoNLL file into a generator of dictionaries containing tokens and labels.
 
     Args:
         file_path (str): Path to the CoNLL file.
 
-    Returns:
-        Dataset: Hugging Face Dataset containing tokens and labels.
+    Yields:
+        Generator[Dict[str, List]]: A generator of dictionaries containing tokens and labels.
 
     Raises:
         FileNotFoundError: If the file does not exist.
         ValueError: If the file is improperly formatted.
     """
     try:
-        sentences, labels = [], []
-        temp_sent, temp_label = [], []
         with open(file_path, "r", encoding="utf-8") as f:
+            tokens, labels = [], []
             for line in f:
                 line = line.strip()
                 if not line:
-                    if temp_sent:
-                        sentences.append(temp_sent)
-                        labels.append(temp_label)
-                        temp_sent, temp_label = [], []
+                    if tokens:
+                        yield {
+                            "tokens": tokens, 
+                            "labels": labels
+                        }
+                        tokens, labels = [], []
                 else:
                     try:
                         word, tag = line.split()
-                        temp_sent.append(word)
-                        temp_label.append(tag)
+                        tokens.append(word)
+                        labels.append(tag)
                     except ValueError:
                         logger.error(f"Invalid line format in CoNLL file: {line}")
                         raise ValueError(f"Invalid line format in CoNLL file: {line}")
-        if temp_sent:
-            sentences.append(temp_sent)
-            labels.append(temp_label)
-        return Dataset.from_dict({"tokens": sentences, "labels": labels})
+            if tokens:
+                yield {
+                    "tokens": tokens, 
+                    "labels": labels
+                }
     except FileNotFoundError:
         logger.error(f"File not found: {file_path}")
         raise
@@ -88,7 +68,7 @@ def parse_conll(file_path: str) -> Dataset:
         logger.error(f"Error parsing CoNLL file: {e}")
         raise
 
-def parse_conll_raw(file_path: str) -> List[List[str]]:
+def parse_conll_raw(file_path: str) -> Generator[List[List[str]], None, None]:
     """
     Parse a CoNLL file into a list of raw sentences, where each sentence is a list of lines.
 
@@ -99,19 +79,18 @@ def parse_conll_raw(file_path: str) -> List[List[str]]:
         List[List[str]]: A list of sentences, where each sentence is a list of lines.
     """
     sentences = []
-    current_sentence = []
     with open(file_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
-                current_sentence.append(line)
+                sentences.append(line)
             else:
-                if current_sentence:
-                    sentences.append(current_sentence)
-                    current_sentence = []
-        if current_sentence:
-            sentences.append(current_sentence)
-    return sentences
+                if sentences:
+                    yield sentences
+
+                    sentences = []
+        if sentences:
+            yield sentences
 
 def split_dataset(
     sentences: List[List[str]],
@@ -166,13 +145,28 @@ def save_conll_file(data: List[List[str]], file_path: str):
             f.writelines(line + "\n" for line in sentence)
             f.write("\n")  # Sentence boundary
 
-def load_conll_datasets(data_dir: str, use_hf_load_dataset: bool = True) -> DatasetDict:
+
+def split_and_save_datasets(filepath, data_dir: str):
+
+    os.makedirs(data_dir, exist_ok=True)
+    train_filepath = os.path.join(data_dir, "train.conll")
+    val_filepath = os.path.join(data_dir, "val.conll")
+    test_filepath = os.path.join(data_dir, "test.conll")
+    
+    sentences = [sentence for sentence in parse_conll_raw(filepath)]
+
+    train_data, val_data, test_data = split_dataset(sentences)
+    save_conll_file(train_data, train_filepath)
+    save_conll_file(val_data, val_filepath)
+    save_conll_file(test_data, test_filepath)
+
+def load_conll_datasets(data_dir: str, use_hf: bool = True, format="conll") -> DatasetDict:
     """
     Load data from CoNLL files into a DatasetDict.
 
     Args:
         data_dir (str): Path to the directory containing CoNLL files.
-        use_hf_load_dataset (bool): If True, use Hugging Face's `load_dataset` with the "conll2003" format.
+        use_hf (bool): If True, use Hugging Face's `load_dataset` with a custom script.
                                      If False, use the custom `parse_conll` function.
 
     Returns:
@@ -186,25 +180,54 @@ def load_conll_datasets(data_dir: str, use_hf_load_dataset: bool = True) -> Data
         train_file = os.path.join(data_dir, "train.conll")
         val_file = os.path.join(data_dir, "val.conll")
         test_file = os.path.join(data_dir, "test.conll")
+        script_file = "conll_script.py"
 
         if not all(os.path.exists(f) for f in [train_file, val_file, test_file]):
             raise FileNotFoundError(f"One or more CoNLL files are missing in {data_dir}")
 
-        if use_hf_load_dataset:
-            return load_dataset(
-                "conll2003",
-                data_files={
-                    "train": train_file,
-                    "validation": val_file,
-                    "test": test_file,
-                },
-            )
+        if use_hf:
+            LABEL_LIST = ["O", "B-Product", "I-Product", "B-LOC", "I-LOC", "B-PRICE", "I-PRICE"]
+            # Load custom CoNLL files using Hugging Face's `load_dataset`
+            if format == "conll":
+                return load_dataset(script_file, data_files = {
+                        "train": train_file,
+                        "validation": train_file,
+                        "test": train_file
+                    },
+                    trust_remote_code=True,  # Allow execution of custom code
+                )
+            # elif format == "csv":
+            #     # Load custom CoNLL files using Hugging Face's `load_dataset`
+            #     return load_dataset("csv", data_files={
+            #             "train": train_file,
+            #             "validation": val_file,
+            #             "test": test_file,
+            #         },
+            #         trust_remote_code=True  # Allow execution of custom code
+            #     )
+            # elif format == "json":
+            #     return load_dataset("json", data_files={
+            #             "train": train_file,
+            #             "validation": val_file,
+            #             "test": test_file,
+            #         },
+            #         trust_remote_code=True  # Allow execution of custom code
+            #     )
         else:
+
+            # Load custom CoNLL dataset
+            # return DatasetDict.load_from_disk(file_path)
+            
+            # Load datasets
+            train_data = [data for data in parse_conll(train_file)]
+            val_data = [data for data in parse_conll(val_file)]
+            test_data = [data for data in parse_conll(test_file)]
+
             return DatasetDict(
                 {
-                    "train": parse_conll(train_file),
-                    "val": parse_conll(val_file),
-                    "test": parse_conll(test_file),
+                    "train": convert_data_to_dataset(train_data),
+                    "val": convert_data_to_dataset(val_data),
+                    "test": convert_data_to_dataset(test_data),
                 }
             )
 
@@ -300,20 +323,30 @@ def initialize_amharic_segmenter(sent_punct: List[str] = [], word_punct: List[st
         logger.error(f"Error during AmharicSegmenter initialization: {e}")
         raise
 
-def convert_df_to_dataset(data: pd.DataFrame) -> Dataset:
+def convert_data_to_dataset(data: Union[pd.DataFrame, Dict, List]) -> Dataset:
     """
-    Converts a pandas DataFrame to a Hugging Face Dataset.
+    Converts data to a Hugging Face Dataset based on its type.
 
     Args:
-        data (pd.DataFrame): The DataFrame to convert.
+        data (Union[pd.DataFrame, Dict, List]): The data to convert.
 
     Returns:
         Dataset: The converted dataset.
+
+    Raises:
+        Exception: If the conversion fails.
     """
     try:
-        return Dataset.from_pandas(data)
+        if isinstance(data, pd.DataFrame):
+            return Dataset.from_pandas(data)
+        elif isinstance(data, dict):
+            return Dataset.from_dict(data)
+        elif isinstance(data, list):
+            return Dataset.from_list(data)
+        else:
+            raise ValueError(f"Unsupported data type: {type(data)}. Expected DataFrame, Dict, or List.")
     except Exception as e:
-        logger.error(f"Error converting DataFrame to dataset: {e}")
+        logger.error(f"Error converting data to dataset: {e}")
         raise
 
 def separate_tokens_and_labels(
@@ -386,14 +419,6 @@ def save_labels(tokens: List[str], labels: List[str], filename: str, out_dir: st
     def convert_tokens_labels_to_data(tokens: List[str], labels: List[str], return_dataframe: bool = True) -> Union[pd.DataFrame, Dict]:
         """
         Converts tokens and labels into a DataFrame or dictionary.
-
-        Args:
-            tokens (List[str]): List of tokens.
-            labels (List[str]): List of labels.
-            return_dataframe (bool): If True, returns a DataFrame; otherwise, returns a dictionary.
-
-        Returns:
-            Union[pd.DataFrame, Dict]: DataFrame or dictionary containing tokens and labels.
         """
         try:
             if return_dataframe:
@@ -426,43 +451,163 @@ def save_labels(tokens: List[str], labels: List[str], filename: str, out_dir: st
         logger.error(f"Error saving labels: {e}")
         raise
 
-# def load_conll_data(file_path):
-#     """
-#     Loads CoNLL formatted data from a file and returns it as a DataFrame.
 
-#     Args:
-#         file_path (str): Path to the CoNLL formatted file.
+def load_and_tokenize_dataset(data_path: str, tokenizer, ner_tags: List, max_length: int, use_hf: bool = False) -> DatasetDict:
+    """
+    Load and tokenize the dataset.
 
-#     Returns:
-#         pd.DataFrame: DataFrame containing the loaded data with 'tokens' and 'labels' columns.
-#     """
-#     try:
-#         with open(file_path, "r", encoding="utf-8") as f:
-#             lines = f.readlines()
-        
-#         sentences = []
-#         labels = []
-#         current_sentence = []
-#         current_labels = []
-        
-#         for line in lines:
-#             line = line.strip()
-#             if not line:  # Sentence boundary
-#                 if current_sentence:
-#                     sentences.append(current_sentence)
-#                     labels.append(current_labels)
-#                     current_sentence = []
-#                     current_labels = []
-#             else:
-#                 token, tag = line.split()
-#                 current_sentence.append(token)
-#                 current_labels.append(tag)
-        
-#         return pd.DataFrame({"tokens": sentences, "labels": labels})
-#     except FileNotFoundError:
-#         logger.error(f"File not found: {file_path}")
-#         raise
-#     except Exception as e:
-#         logger.error(f"Error loading CoNLL data: {e}")
-#         raise
+    Args:
+        data_path (str): Path to the dataset.
+        tokenizer: Tokenizer to use.
+        ner_tags (List): List of NER tags.
+        max_length (int): Maximum length for tokenization.
+        use_hf (bool): Whether to use Hugging Face for loading dataset.
 
+    Returns:
+        DatasetDict: Tokenized dataset.
+    """
+    logger.info("[INFO] Loading dataset...")
+    dataset = load_conll_datasets(data_path, use_hf=use_hf)
+    logger.info("[INFO] Finished loading dataset.")
+
+    # Tokenize datasets
+    tokenify = Tokenizer(tokenizer, ner_tags=ner_tags, max_length=max_length)
+
+    logger.info("[INFO] Tokenizing dataset...")
+    tokenized_datasets = dataset.map(
+        tokenify.tokenize_and_align_labels,
+        batched=True,
+        remove_columns=dataset["train"].column_names,  # To save space
+        # num_proc=4,  # Multiple processes for efficiency
+    )
+    logger.info("[INFO] Finished tokenizing dataset.")
+
+    return tokenized_datasets
+
+def save_tokenized_dataset(tokenized_datasets: DatasetDict, tokenized_dir: str) -> None:
+    """
+    Save tokenized dataset to disk.
+
+    Args:
+        tokenized_datasets (DatasetDict): Tokenized dataset to save.
+        tokenized_dir (str): Directory to save tokenized dataset.
+    """
+    logger.info("[INFO] Saving tokenized dataset...")
+    tokenized_datasets.save_to_disk(tokenized_dir)
+    logger.info("[INFO] Finished saving tokenized dataset.")
+
+def load_tokenized_datasets(tokenized_dir: str) -> DatasetDict:
+    """
+    Load tokenized dataset from disk if it exists.
+
+    Args:
+        tokenized_dir (str): Directory to load tokenized dataset.
+
+    Returns:
+        DatasetDict: Tokenized dataset.
+    """
+    logger.info("[INFO] Loading tokenized dataset from disk.")
+    tokenized_datasets = DatasetDict.load_from_disk(tokenized_dir)
+    return tokenized_datasets
+
+def load_tokenized_dataset(tokenized_dir: str) -> DatasetDict:
+    """
+    Load tokenized dataset from disk if it exists.
+
+    Args:
+        tokenized_dir (str): Directory to load tokenized dataset.
+
+    Returns:
+        DatasetDict: Tokenized dataset.
+    """
+    logger.info("[INFO] Loading tokenized dataset from disk.")
+    tokenized_datasets = Dataset.load_from_disk(tokenized_dir)
+    # tokenized_datasets = load_from_disk(tokenized_dir)
+    return tokenized_datasets
+
+def save_metadata(metadata: Dict, metadata_filepath: str) -> None:
+    """
+    Save metadata to disk.
+
+    Args:
+        metadata (Dict): Metadata to save.
+        metadata_filepath (str): Path to save metadata.
+    """
+    
+    logger.info("[INFO] Saving metadata...")
+    save_json(metadata, metadata_filepath, use_pandas=False)
+    logger.info("[INFO] Finished saving metadata.")
+
+def load_metadata(metadata_filepath: str) -> Dict:
+    """
+    Load metadata from disk if it exists.
+
+    Args:
+        metadata_filepath (str): Path to load metadata.
+
+    Returns:
+        Dict: Metadata.
+    """
+    logger.info("[INFO] Loading metadata from disk.")
+    metadata = load_json(metadata_filepath)
+    return metadata
+
+
+def tokenize_and_align_labels(sentences: Dict, tokenizer: AutoTokenizer, label_id_mapping: Dict[str, int]) -> Dict:
+    """
+    Tokenize inputs and align labels for token classification.
+    """
+    
+    try:
+        tokenized_inputs = tokenizer(
+            sentences["tokens"], truncation=True, is_split_into_words=True, max_length=128
+        )
+        labels = [
+            [-100 if word_id is None else label[word_id] for word_id in tokenized_inputs.word_ids(batch_index=i)]
+        #     [-100 if word_id is None else label_id_mapping.get(label[word_id], -100) for word_id in tokenized_inputs.word_ids(batch_index=i)]
+            for i, label in enumerate(sentences["labels"])
+        ]
+
+        # labels = []
+        # for i, label in enumerate(sentences["labels"]):
+        #     word_ids = tokenized_inputs.word_ids(batch_index=i)  # Map tokens to their respective word
+        #     previous_word_idx = None
+        #     label_ids = []
+        #     for word_idx in word_ids:
+        #         if word_idx is None:
+        #             label_ids.append(-100)  # Special token
+        #         elif word_idx != previous_word_idx:
+        #             label_ids.append(label[word_idx])  # New word
+        #         else:
+        #             label_ids.append(-100)  # Same word, subsequent token
+        #         previous_word_idx = word_idx
+        #     labels.append(label_ids)
+            
+        tokenized_inputs["labels"] = labels
+        return tokenized_inputs
+    except Exception as e:
+        logger.error(f"Error during tokenization and label alignment: {e}")
+        raise
+
+
+def create_label_id_mapping(labels: List[str]) -> ClassLabel:
+    """
+    Creates a ClassLabel instance from the provided label mapping.
+
+    Args:
+        labels (List[str]): List of string labels.
+
+    Returns:
+        ClassLabel: A ClassLabel instance for label-to-ID mapping.
+
+    Raises:
+        ValueError: If the label list is empty.
+    """
+    if not labels:
+        raise ValueError("Label list cannot be empty.")
+    try:
+        class_label = ClassLabel(names=labels)
+        return {label: class_label.str2int(label) for label in labels}
+    except Exception as e:
+        logger.error(f"Error when creating label mapping: {e}")
+        raise

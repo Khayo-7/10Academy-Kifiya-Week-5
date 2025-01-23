@@ -137,12 +137,12 @@ def load_json(file_path: str, use_pandas: bool = False) -> Union[List[Dict], Dic
         logger.error(f"Error loading JSON from {file_path}: {e}")
         raise
 
-def save_json(data: Union[List[Dict], Dict, pd.DataFrame], output_path: str, use_pandas: bool = True) -> None:
+def save_json(data, output_path: str, use_pandas: bool = True) -> None:
     """
     Saves data to a JSON file.
 
     Args:
-        data (Union[List[Dict], Dict, pd.DataFrame]): Data to save.
+        data: Data to save.
         output_path (str): Path to save the JSON file.
         use_pandas (bool, optional): Whether to use pandas. Defaults to True.
 
@@ -208,7 +208,7 @@ def save_pickle(data: Any, output_path: str) -> None:
         logger.error(f"Error saving data to {output_path}: {e}")
         raise
 
-def load_conll(file_path: str, columns=["Tokens", "Labels"], use_pandas: bool = True) -> Union[List[Dict[str, List[str]]], pd.DataFrame]:
+def load_conll(file_path: str, columns=["tokens", "labels"], use_pandas: bool = True) -> Union[List[Dict[str, List[str]]], pd.DataFrame]:
     """
     Loads data from a CoNLL file into a list of dictionaries or a pandas DataFrame.
 
@@ -337,29 +337,3 @@ def load_data(file_path: str, use_pandas: bool = True) -> Union[List[Dict], Dict
     else:
         logger.error("Unsupported file format. Use JSON, CSV, CoNLL, or pickle.")
         raise ValueError("Unsupported file format. Use JSON, CSV, CoNLL, or pickle.")
-def save_data(data: Union[List[Dict], Dict, pd.DataFrame], filename: str, output_dir: str, format: str = 'csv', columns: list = [], use_pandas: bool = True) -> None:
-    """
-    Saves data to a CSV, JSON, CoNLL, or pickle file.
-
-    Args:
-        data (Union[List[Dict], Dict, pd.DataFrame]): Data to save.
-        filename (str): Base name of the file to save.
-        output_dir (str): Directory to save the file.
-        format (str, optional): Format to save the data ("csv", "json", "conll", or "pkl"). Defaults to "csv".
-        columns (list, optional): A list of column names to use for the data. Defaults to an empty list.
-        use_pandas (bool, optional): Whether to use pandas. Defaults to True.
-
-    Raises:
-        ValueError: If the format is unsupported.
-    """
-    if format == 'csv':
-        save_csv(data, os.path.join(output_dir, f"{filename}.csv"), use_pandas=use_pandas)
-    elif format == 'json':
-        save_json(data, os.path.join(output_dir, f"{filename}.json"), use_pandas=use_pandas)
-    elif format == 'pkl':
-        save_pickle(data, os.path.join(output_dir, f"{filename}.pkl"))
-    elif format == 'conll':
-        save_conll(data, os.path.join(output_dir, f"{filename}.conll"), columns=columns, use_pandas=use_pandas)
-    else:
-        logger.error(f"Unsupported format: {format}. Use 'csv', 'json', 'conll', or 'pkl'.")
-        raise ValueError(f"Unsupported format: {format}. Use 'csv', 'json', 'conll', or 'pkl'.")
