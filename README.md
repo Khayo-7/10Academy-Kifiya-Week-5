@@ -1,13 +1,78 @@
 # 10Academy-Kifiya-Week-5
 
-# Building a Named Entity Recognition (NER) System for Amharic: Challenges, Strategies, and Insights
+# EthioMart: Building a Named Entity Recognition (NER) System for Amharic: Challenges, Strategies, and Insights
 
 ## Introduction
-With the growing adoption of Telegram as a platform for e-commerce activities in Ethiopia, numerous independent channels facilitate business transactions. However, this decentralization poses significant challenges for both customers and vendors. EthioMart’s vision is to centralize these activities, providing a unified platform that consolidates real-time data from these channels. A crucial part of this initiative involves fine-tuning Named Entity Recognition (NER) models tailored for Amharic to extract key business entities from text shared across these channels.
+
+With the growing adoption of Telegram as a platform for e-commerce activities in Ethiopia, numerous independent channels facilitate business transactions. However, this decentralization poses significant challenges for both customers and vendors. The EthioMart NER project aims to create a centralized platform for Telegram-based e-commerce in Ethiopia by extracting key business entities (e.g., product names, prices, and locations) from Telegram messages. EthioMart’s vision is to centralize these activities, providing a unified platform that consolidates real-time data from these channels. A crucial part of this initiative involves fine-tuning Named Entity Recognition (NER) models tailored for Amharic to extract key business entities from text shared across these channels.
 
 This report outlines the step-by-step process of developing an Amharic NER system, including the collection, preprocessing, annotation, and modeling phases, as well as insights derived from each stage. The discussion concludes with key results, challenges, and recommendations for future improvements.
 
 ---
+
+## **Data Preparation**
+
+### **Data Ingestion**
+- **Objective:** Fetch messages from Ethiopian Telegram e-commerce channels.
+- **Steps Completed:**
+  1. Identified and connected to 5 Telegram channels (e.g., Shageronlinestore, ShegerMart, AddisMall).
+  2. Developed a Python script (`scraper.py`) using the `telethon` library to scrape messages in real-time.
+  3. Fetched and stored raw messages, including text and metadata (e.g., sender, timestamp, channel name).
+
+### **Data Preprocessing**
+- **Objective:** Clean and normalize the raw data for further analysis.
+- **Steps Completed:**
+  1. Cleaned text data by removing special characters, emojis, and unnecessary symbols.
+  2. Normalized Amharic text (e.g., removed diacritics, standardized characters).
+  3. Tokenized text into individual words for easier processing.
+  4. Extracted text from product images using Tesseract OCR with Amharic language support.
+  5. Saved preprocessed data in a structured format (`resources/data/preprocessed_data.csv`).
+
+#### **Challenges**
+- **Amharic Text Processing:** Handling Amharic-specific linguistic features (e.g., diacritics, compound words) required custom normalization techniques.
+- **OCR Limitations:** Extracting text from low-quality images or handwritten text proved challenging.
+
+---
+
+## **Data Labeling**
+
+### **Labeling Process**
+- **Objective:** Label a subset of the preprocessed data in CoNLL format for NER tasks.
+- **Steps Completed:**
+  1. Created a labeling script (`label_data.py`) to assist with manual labeling.
+  2. Defined entity labels:
+     - `B-Product`, `I-Product` for product names.
+     - `B-PRICE`, `I-PRICE` for prices.
+     - `B-LOC`, `I-LOC` for locations.
+     - `O` for non-entity tokens.
+  3. Labeled 30-50 messages, ensuring consistency and accuracy in annotations.
+  4. Saved the labeled dataset in CoNLL format (`resources/data/labeled/labeled_data.conll`).
+
+#### **Labeling Example**
+Example of labeled data in CoNLL format:
+```
+የቤት    O
+ውስጥ    O
+እቃ    B-Product
+በ1000   B-PRICE
+ብር    I-PRICE
+```
+
+### **Challenges**
+- **Ambiguity:** Some tokens were ambiguous (e.g., words that could be either product names or locations).
+- **Time-Consuming:** Manual labeling required significant effort to ensure high-quality annotations.
+
+---
+
+### Summary of Deliverables**
+
+| **Task**               | **Deliverables**                                                                 |
+|-------------------------|---------------------------------------------------------------------------------|
+| Data Ingestion          | Python script (`scraper.py`) to fetch messages from Telegram channels.          |
+| Data Preprocessing      | Cleaned and normalized dataset (`resources/data/preprocessed_data.csv`).        |
+| Data Labeling           | Labeled dataset in CoNLL format (`resources/data/labeled/labeled_data.conll`).  |
+| Labeling Script         | Python script (`label_data.py`) for manual labeling.                            |
+
 
 ## Data Collection and Preprocessing
 ### Data Ingestion
@@ -44,6 +109,8 @@ These models were evaluated for:
 
 ### Tokenization and Label Alignment
 To accommodate the subword tokenization used by these models, a custom implementation aligned NER labels with tokenized text. The workflow ensured that tokenized subtokens carried correct label associations, a task that required handling Amharic morphology efficiently.
+
+---
 
 ### Training
 Fine-tuning was conducted using Hugging Face’s Transformers library, leveraging GPUs to accelerate computation. The training strategy involved:
